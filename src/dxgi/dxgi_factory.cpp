@@ -149,8 +149,41 @@ public:
       IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) final {
     InitReturnPtr(ppSwapChain);
 
-    ERR("Not implemented");
-    return E_NOTIMPL;
+    if (!ppSwapChain || !pDesc || !pDevice)
+      return DXGI_ERROR_INVALID_CALL;
+
+    // Madeira: only the native D3D12 runtime (madeira-d3d12) supports a
+    // swapchain with no window. It is created unbound and shown once
+    // dcomp.dll binds it to its target's HWND at Commit
+    // (MadeiraD3D12SwapChainSetHwnd). Godot 4 presents only this way.
+    static const GUID iid_d3d12_command_queue = {
+        0x0ec870a6, 0x5d7e, 0x4c22,
+        {0x8c, 0xfc, 0x5b, 0xaa, 0xe0, 0x76, 0x16, 0xed}};
+    Com<IUnknown> queue;
+    if (FAILED(pDevice->QueryInterface(iid_d3d12_command_queue,
+                                       reinterpret_cast<void **>(&queue)))) {
+      ERR("CreateSwapChainForComposition: only supported for D3D12 queues");
+      return E_NOTIMPL;
+    }
+
+    Com<IMTLDXGIDevice> metal_dxgi_device;
+    if (FAILED(pDevice->QueryInterface(IID_PPV_ARGS(&metal_dxgi_device)))) {
+      ERR("Unsupported device type");
+      return DXGI_ERROR_UNSUPPORTED;
+    }
+
+    // A composition swapchain has no window to take its size from.
+    if (!pDesc->Width || !pDesc->Height)
+      return DXGI_ERROR_INVALID_CALL;
+
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fsDesc;
+    fsDesc.RefreshRate = {0, 0};
+    fsDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+    fsDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+    fsDesc.Windowed = TRUE;
+
+    return metal_dxgi_device->CreateSwapChain(this, nullptr, pDesc, &fsDesc,
+                                              ppSwapChain);
   }
 
   HRESULT STDMETHODCALLTYPE EnumAdapters(UINT Adapter,
